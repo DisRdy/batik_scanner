@@ -27,6 +27,22 @@ class SplitItem:
     path: Path
 
 
+def looks_like_supported_image(path: Path) -> bool:
+    try:
+        header = path.read_bytes()[:16]
+    except OSError:
+        return False
+
+    return (
+        header.startswith(b"\xff\xd8\xff")
+        or header.startswith(b"\x89PNG\r\n\x1a\n")
+        or header.startswith(b"GIF87a")
+        or header.startswith(b"GIF89a")
+        or header.startswith(b"BM")
+        or (header.startswith(b"RIFF") and header[8:12] == b"WEBP")
+    )
+
+
 def natural_key(path: Path) -> tuple[object, ...]:
     parts = re.split(r"(\d+)", path.stem.lower())
     key: list[object] = []
@@ -39,15 +55,22 @@ def natural_key(path: Path) -> tuple[object, ...]:
     return tuple(key)
 
 
-def collect_images(class_dir: Path) -> list[Path]:
+def collect_images(class_dir: Path, validate_images: bool) -> tuple[list[Path], list[Path]]:
     if not class_dir.exists():
         raise FileNotFoundError(f"Folder kelas tidak ditemukan: {class_dir}")
-    images = [
+    candidates = [
         path
         for path in class_dir.iterdir()
         if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
     ]
-    return sorted(images, key=natural_key)
+    images: list[Path] = []
+    invalid_images: list[Path] = []
+    for path in sorted(candidates, key=natural_key):
+        if validate_images and not looks_like_supported_image(path):
+            invalid_images.append(path)
+        else:
+            images.append(path)
+    return images, invalid_images
 
 
 def build_split(
@@ -57,12 +80,13 @@ def build_split(
     val_count: int,
     test_count: int,
     strict_test_count: bool,
+    validate_images: bool,
 ) -> tuple[list[SplitItem], list[dict[str, object]]]:
     split_items: list[SplitItem] = []
     summary: list[dict[str, object]] = []
 
     for class_index, class_name in enumerate(class_dirs):
-        images = collect_images(dataset_dir / class_name)
+        images, invalid_images = collect_images(dataset_dir / class_name, validate_images)
         minimum_needed = train_count + val_count
         if len(images) < minimum_needed:
             raise ValueError(
@@ -94,7 +118,11 @@ def build_split(
         summary.append(
             {
                 "class_name": class_name,
-                "total_images": len(images),
+                "total_images": len(images) + len(invalid_images),
+                "valid_images": len(images),
+                "invalid_images": [
+                    path.relative_to(dataset_dir).as_posix() for path in invalid_images
+                ],
                 "train": len(train_images),
                 "validation": len(val_images),
                 "test": len(test_images),
@@ -229,7 +257,18 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--val-count", type=int, default=10)
     parser.add_argument("--test-count", type=int, default=10)
     parser.add_argument("--strict-test-count", action="store_true")
+    parser.add_argument(
+        "--no-validate-images",
+        action="store_true",
+        help="Jangan cek magic bytes file gambar sebelum membuat split.",
+    )
     parser.add_argument("--split-only", action="store_true")
+    parser.add_argument(
+        "--evaluate-model",
+        type=Path,
+        default=None,
+        help="Path model .keras yang akan dievaluasi pada test set tanpa training ulang.",
+    )
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=12)
@@ -260,6 +299,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         val_count=args.val_count,
         test_count=args.test_count,
         strict_test_count=args.strict_test_count,
+        validate_images=not args.no_validate_images,
     )
 
     write_manifest(split_items, output_dir / "split_manifest.csv", root)
@@ -268,7 +308,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print("Split dataset:")
     for item in summary:
-        warning = f" | WARNING: {item['warning']}" if item["warning"] else ""
+        warning_parts = []
+        if item["invalid_images"]:
+            warning_parts.append(f"invalid image dilewati: {', '.join(item['invalid_images'])}")
+        if item["warning"]:
+            warning_parts.append(str(item["warning"]))
+        warning = f" | WARNING: {'; '.join(warning_parts)}" if warning_parts else ""
         print(
             f"- {item['class_name']}: train={item['train']}, "
             f"validation={item['validation']}, test={item['test']}, unused={item['unused']}{warning}"
@@ -288,6 +333,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     train_ds = make_dataset(tf, train_items, args.image_size, args.batch_size, True, args.seed)
     val_ds = make_dataset(tf, val_items, args.image_size, args.batch_size, False, args.seed)
     test_ds = make_dataset(tf, test_items, args.image_size, args.batch_size, False, args.seed)
+
+    if args.evaluate_model is not None:
+        model = tf.keras.models.load_model(args.evaluate_model)
+        metrics = model.evaluate(test_ds, return_dict=True)
+        write_json(metrics, output_dir / "test_metrics.json")
+        print(f"Evaluated model: {args.evaluate_model}")
+        print(f"Test metrics: {metrics}")
+        return 0
 
     model = build_model(
         tf=tf,

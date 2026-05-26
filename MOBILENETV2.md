@@ -16,7 +16,7 @@ Split dibuat dari urutan natural filename di setiap folder kelas:
 Catatan dataset saat ini:
 
 - `batik-bali`: 50 gambar, test 10
-- `batik-megamendung`: 47 gambar, test 7
+- `batik-megamendung`: 47 file, 1 file invalid dilewati, test 6
 - `batik-parang`: 50 gambar, test 10
 - `batik-kawung`: 45 gambar, test 5
 
@@ -55,4 +55,10 @@ Jika tidak ingin download pretrained ImageNet weights:
 
 ```powershell
 .\.venv\Scripts\python.exe train_mobilenetv2.py --weights none
+```
+
+Evaluasi ulang model yang sudah tersimpan:
+
+```powershell
+.\.venv\Scripts\python.exe train_mobilenetv2.py --evaluate-model artifacts\batik_mobilenetv2_final.keras
 ```
