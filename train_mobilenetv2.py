@@ -24,6 +24,7 @@ class SplitItem:
     split: str
     class_index: int
     class_name: str
+    tier: str
     path: Path
 
 
@@ -43,15 +44,15 @@ def looks_like_supported_image(path: Path) -> bool:
     )
 
 
-def natural_key(path: Path) -> tuple[object, ...]:
+def natural_key(path: Path) -> tuple[tuple[int, object], ...]:
     parts = re.split(r"(\d+)", path.stem.lower())
-    key: list[object] = []
+    key: list[tuple[int, object]] = []
     for part in parts:
         if part.isdigit():
-            key.append(int(part))
+            key.append((0, int(part)))
         elif part:
-            key.append(part)
-    key.append(path.suffix.lower())
+            key.append((1, part))
+    key.append((1, path.suffix.lower()))
     return tuple(key)
 
 
@@ -81,29 +82,55 @@ def build_split(
     test_count: int,
     strict_test_count: bool,
     validate_images: bool,
+    dynamic_split: bool,
 ) -> tuple[list[SplitItem], list[dict[str, object]]]:
     split_items: list[SplitItem] = []
     summary: list[dict[str, object]] = []
 
     for class_index, class_name in enumerate(class_dirs):
         images, invalid_images = collect_images(dataset_dir / class_name, validate_images)
-        minimum_needed = train_count + val_count
+        effective_train_count = train_count
+        effective_val_count = val_count
+        effective_test_count = test_count
+        tier = "fixed"
+        if dynamic_split:
+            if len(images) >= 80:
+                effective_train_count = 60
+                effective_val_count = 15
+                effective_test_count = 15
+                tier = "80+"
+            elif len(images) >= 50:
+                effective_train_count = 30
+                effective_val_count = 10
+                effective_test_count = 10
+                tier = "50+"
+            else:
+                effective_train_count = 30
+                effective_val_count = 10
+                effective_test_count = 10
+                tier = "<50"
+
+        minimum_needed = effective_train_count + effective_val_count
         if len(images) < minimum_needed:
             raise ValueError(
                 f"Kelas {class_name} hanya punya {len(images)} gambar; "
                 f"butuh minimal {minimum_needed} untuk train+validation."
             )
 
-        train_images = images[:train_count]
-        val_images = images[train_count : train_count + val_count]
-        remaining_images = images[train_count + val_count :]
-        test_images = remaining_images[-test_count:] if len(remaining_images) >= test_count else remaining_images
+        train_images = images[:effective_train_count]
+        val_images = images[effective_train_count : effective_train_count + effective_val_count]
+        remaining_images = images[effective_train_count + effective_val_count :]
+        test_images = (
+            remaining_images[-effective_test_count:]
+            if len(remaining_images) >= effective_test_count
+            else remaining_images
+        )
         unused_images = remaining_images[: max(0, len(remaining_images) - len(test_images))]
 
-        if strict_test_count and len(test_images) < test_count:
+        if strict_test_count and len(test_images) < effective_test_count:
             raise ValueError(
                 f"Kelas {class_name} hanya punya {len(test_images)} gambar test tanpa overlap; "
-                f"butuh {test_count}."
+                f"butuh {effective_test_count}."
             )
 
         for split_name, paths in (
@@ -112,12 +139,13 @@ def build_split(
             ("test", test_images),
         ):
             split_items.extend(
-                SplitItem(split_name, class_index, class_name, path) for path in paths
+                SplitItem(split_name, class_index, class_name, tier, path) for path in paths
             )
 
         summary.append(
             {
                 "class_name": class_name,
+                "tier": tier,
                 "total_images": len(images) + len(invalid_images),
                 "valid_images": len(images),
                 "invalid_images": [
@@ -128,9 +156,9 @@ def build_split(
                 "test": len(test_images),
                 "unused": len(unused_images),
                 "warning": (
-                    f"test set kurang dari {test_count} karena total gambar kurang dari "
-                    f"{train_count + val_count + test_count}"
-                    if len(test_images) < test_count
+                    f"test set kurang dari {effective_test_count} karena total gambar kurang dari "
+                    f"{effective_train_count + effective_val_count + effective_test_count}"
+                    if len(test_images) < effective_test_count
                     else ""
                 ),
             }
@@ -144,7 +172,7 @@ def write_manifest(split_items: Sequence[SplitItem], output_path: Path, root: Pa
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=("split", "class_index", "class_name", "path"),
+            fieldnames=("split", "class_index", "class_name", "tier", "path"),
         )
         writer.writeheader()
         for item in split_items:
@@ -153,6 +181,7 @@ def write_manifest(split_items: Sequence[SplitItem], output_path: Path, root: Pa
                     "split": item.split,
                     "class_index": item.class_index,
                     "class_name": item.class_name,
+                    "tier": item.tier,
                     "path": item.path.relative_to(root).as_posix(),
                 }
             )
@@ -163,18 +192,24 @@ def write_json(payload: object, output_path: Path) -> None:
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def write_history(history: dict[str, list[float]], output_path: Path) -> None:
-    metric_names = list(history.keys())
-    rows = max((len(values) for values in history.values()), default=0)
+def write_history(histories: Sequence[tuple[int, dict[str, list[float]]]], output_path: Path) -> None:
+    metric_names: list[str] = []
+    for _, history in histories:
+        for metric_name in history:
+            if metric_name not in metric_names:
+                metric_names.append(metric_name)
+
     with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["epoch", *metric_names])
+        writer = csv.DictWriter(handle, fieldnames=["phase", "epoch", *metric_names])
         writer.writeheader()
-        for index in range(rows):
-            row = {"epoch": index + 1}
-            for metric_name in metric_names:
-                values = history[metric_name]
-                row[metric_name] = values[index] if index < len(values) else ""
-            writer.writerow(row)
+        for phase, history in histories:
+            rows = max((len(values) for values in history.values()), default=0)
+            for index in range(rows):
+                row = {"phase": phase, "epoch": index + 1}
+                for metric_name in metric_names:
+                    values = history.get(metric_name, [])
+                    row[metric_name] = values[index] if index < len(values) else ""
+                writer.writerow(row)
 
 
 def import_tensorflow():
@@ -210,13 +245,23 @@ def make_dataset(tf, items: Sequence[SplitItem], image_size: int, batch_size: in
     )
 
 
+def compile_model(tf, model, learning_rate: float) -> None:
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        metrics=["accuracy"],
+    )
+
+
 def build_model(tf, image_size: int, num_classes: int, weights: str | None, dropout: float, learning_rate: float):
     inputs = tf.keras.Input(shape=(image_size, image_size, 3), name="image")
     x = tf.keras.Sequential(
         [
-            tf.keras.layers.RandomFlip("horizontal"),
-            tf.keras.layers.RandomRotation(0.08),
-            tf.keras.layers.RandomZoom(0.12),
+            tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+            tf.keras.layers.RandomRotation(0.2),
+            tf.keras.layers.RandomZoom(0.2),
+            tf.keras.layers.RandomContrast(0.2),
+            tf.keras.layers.RandomBrightness(0.2),
         ],
         name="augmentation",
     )(inputs)
@@ -234,12 +279,145 @@ def build_model(tf, image_size: int, num_classes: int, weights: str | None, drop
     x = tf.keras.layers.Dropout(dropout, name="dropout")(x)
     outputs = tf.keras.layers.Dense(num_classes, activation="softmax", name="predictions")(x)
     model = tf.keras.Model(inputs, outputs, name="batik_mobilenetv2")
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
-        metrics=["accuracy"],
+    compile_model(tf, model, learning_rate)
+    return model, base_model
+
+
+def make_callbacks(tf, checkpoint_path: Path, patience: int):
+    return [
+        tf.keras.callbacks.ModelCheckpoint(
+            filepath=str(checkpoint_path),
+            monitor="val_accuracy",
+            mode="max",
+            save_best_only=True,
+        ),
+        tf.keras.callbacks.EarlyStopping(
+            monitor="val_accuracy",
+            mode="max",
+            patience=patience,
+            restore_best_weights=True,
+        ),
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss",
+            factor=0.5,
+            patience=2,
+            min_lr=1e-7,
+        ),
+    ]
+
+
+def compute_training_class_weights(train_items: Sequence[SplitItem], num_classes: int) -> dict[int, float]:
+    try:
+        import numpy as np
+        from sklearn.utils.class_weight import compute_class_weight
+    except ImportError as exc:
+        raise SystemExit(
+            "scikit-learn belum terpasang. Jalankan: "
+            ".\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt"
+        ) from exc
+
+    labels = np.array([item.class_index for item in train_items])
+    classes = np.arange(num_classes)
+    weights = compute_class_weight(class_weight="balanced", classes=classes, y=labels)
+    return {int(class_index): float(weight) for class_index, weight in zip(classes, weights)}
+
+
+def unfreeze_last_layers(base_model, layer_count: int) -> None:
+    base_model.trainable = True
+    for layer in base_model.layers[:-layer_count]:
+        layer.trainable = False
+    for layer in base_model.layers[-layer_count:]:
+        layer.trainable = True
+
+
+def save_evaluation_outputs(model, test_ds, class_names: Sequence[str], output_dir: Path) -> dict[str, object]:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from sklearn.metrics import classification_report, confusion_matrix
+    except ImportError as exc:
+        raise SystemExit(
+            "matplotlib dan scikit-learn belum terpasang. Jalankan: "
+            ".\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt"
+        ) from exc
+
+    y_true: list[int] = []
+    y_pred: list[int] = []
+    for images, labels in test_ds:
+        probabilities = model.predict(images, verbose=0)
+        y_true.extend(int(label) for label in labels.numpy().tolist())
+        y_pred.extend(int(label) for label in np.argmax(probabilities, axis=1).tolist())
+
+    labels = list(range(len(class_names)))
+    matrix = confusion_matrix(y_true, y_pred, labels=labels)
+    report_text = classification_report(
+        y_true,
+        y_pred,
+        labels=labels,
+        target_names=list(class_names),
+        zero_division=0,
     )
-    return model
+    report_dict = classification_report(
+        y_true,
+        y_pred,
+        labels=labels,
+        target_names=list(class_names),
+        zero_division=0,
+        output_dict=True,
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "classification_report.txt").write_text(report_text, encoding="utf-8")
+
+    figure, axis = plt.subplots(figsize=(8, 6))
+    image = axis.imshow(matrix, interpolation="nearest", cmap="Blues")
+    figure.colorbar(image, ax=axis)
+    tick_marks = np.arange(len(class_names))
+    axis.set_xticks(tick_marks)
+    axis.set_yticks(tick_marks)
+    axis.set_xticklabels(class_names, rotation=45, ha="right")
+    axis.set_yticklabels(class_names)
+    axis.set_ylabel("Actual")
+    axis.set_xlabel("Predicted")
+    axis.set_title("Confusion Matrix")
+
+    threshold = matrix.max() / 2 if matrix.size and matrix.max() > 0 else 0
+    for row_index in range(matrix.shape[0]):
+        for col_index in range(matrix.shape[1]):
+            axis.text(
+                col_index,
+                row_index,
+                str(matrix[row_index, col_index]),
+                ha="center",
+                va="center",
+                color="white" if matrix[row_index, col_index] > threshold else "black",
+            )
+
+    figure.tight_layout()
+    figure.savefig(output_dir / "confusion_matrix.png", dpi=160)
+    plt.close(figure)
+
+    print("Classification report:")
+    print(report_text)
+
+    per_class_accuracy = {
+        class_name: float(report_dict[class_name]["recall"]) for class_name in class_names
+    }
+    return {
+        "per_class_accuracy": per_class_accuracy,
+        "classification_report": report_dict,
+    }
+
+
+def evaluate_and_save(model, test_ds, class_names: Sequence[str], output_dir: Path) -> dict[str, object]:
+    metrics = model.evaluate(test_ds, return_dict=True)
+    metrics = {name: float(value) for name, value in metrics.items()}
+    evaluation_outputs = save_evaluation_outputs(model, test_ds, class_names, output_dir)
+    metrics.update(evaluation_outputs)
+    write_json(metrics, output_dir / "test_metrics.json")
+    return metrics
 
 
 def filter_split(items: Sequence[SplitItem], split_name: str) -> list[SplitItem]:
@@ -256,6 +434,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--train-count", type=int, default=30)
     parser.add_argument("--val-count", type=int, default=10)
     parser.add_argument("--test-count", type=int, default=10)
+    parser.add_argument(
+        "--dynamic-split",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Gunakan split dinamis berdasarkan jumlah gambar valid per kelas.",
+    )
     parser.add_argument("--strict-test-count", action="store_true")
     parser.add_argument(
         "--no-validate-images",
@@ -272,6 +456,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=12)
+    parser.add_argument("--finetune-epochs", type=int, default=10)
     parser.add_argument("--patience", type=int, default=4)
     parser.add_argument("--dropout", type=float, default=0.25)
     parser.add_argument("--learning-rate", type=float, default=0.0003)
@@ -300,6 +485,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         test_count=args.test_count,
         strict_test_count=args.strict_test_count,
         validate_images=not args.no_validate_images,
+        dynamic_split=args.dynamic_split,
     )
 
     write_manifest(split_items, output_dir / "split_manifest.csv", root)
@@ -316,7 +502,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         warning = f" | WARNING: {'; '.join(warning_parts)}" if warning_parts else ""
         print(
             f"- {item['class_name']}: train={item['train']}, "
-            f"validation={item['validation']}, test={item['test']}, unused={item['unused']}{warning}"
+            f"validation={item['validation']}, test={item['test']}, "
+            f"unused={item['unused']}, tier={item['tier']}{warning}"
         )
 
     if args.split_only:
@@ -336,13 +523,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.evaluate_model is not None:
         model = tf.keras.models.load_model(args.evaluate_model)
-        metrics = model.evaluate(test_ds, return_dict=True)
-        write_json(metrics, output_dir / "test_metrics.json")
+        metrics = evaluate_and_save(model, test_ds, args.class_dirs, output_dir)
         print(f"Evaluated model: {args.evaluate_model}")
         print(f"Test metrics: {metrics}")
         return 0
 
-    model = build_model(
+    model, base_model = build_model(
         tf=tf,
         image_size=args.image_size,
         num_classes=len(args.class_dirs),
@@ -351,38 +537,50 @@ def main(argv: Sequence[str] | None = None) -> int:
         learning_rate=args.learning_rate,
     )
 
+    class_weight = compute_training_class_weights(train_items, len(args.class_dirs))
+    print(f"Class weights: {class_weight}")
+
     checkpoint_path = output_dir / "batik_mobilenetv2_best.keras"
-    callbacks = [
-        tf.keras.callbacks.ModelCheckpoint(
-            filepath=str(checkpoint_path),
-            monitor="val_accuracy",
-            mode="max",
-            save_best_only=True,
-        ),
-        tf.keras.callbacks.EarlyStopping(
-            monitor="val_accuracy",
-            mode="max",
-            patience=args.patience,
-            restore_best_weights=True,
-        ),
-    ]
+    callbacks = make_callbacks(tf, checkpoint_path, args.patience)
 
     history = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=args.epochs,
         callbacks=callbacks,
+        class_weight=class_weight,
     )
 
     final_model_path = output_dir / "batik_mobilenetv2_final.keras"
     model.save(final_model_path)
-    write_history(history.history, output_dir / "training_history.csv")
 
-    metrics = model.evaluate(test_ds, return_dict=True)
-    write_json(metrics, output_dir / "test_metrics.json")
+    histories: list[tuple[int, dict[str, list[float]]]] = [(1, history.history)]
+    finetuned_checkpoint_path = output_dir / "batik_mobilenetv2_finetuned_best.keras"
+    finetuned_final_model_path = output_dir / "batik_mobilenetv2_finetuned_final.keras"
+
+    if args.finetune_epochs > 0:
+        unfreeze_last_layers(base_model, 30)
+        compile_model(tf, model, args.learning_rate * 0.1)
+        finetune_callbacks = make_callbacks(tf, finetuned_checkpoint_path, args.patience)
+        finetune_history = model.fit(
+            train_ds,
+            validation_data=val_ds,
+            epochs=args.finetune_epochs,
+            callbacks=finetune_callbacks,
+            class_weight=class_weight,
+        )
+        model.save(finetuned_final_model_path)
+        histories.append((2, finetune_history.history))
+
+    write_history(histories, output_dir / "training_history.csv")
+
+    metrics = evaluate_and_save(model, test_ds, args.class_dirs, output_dir)
 
     print(f"Model terbaik: {checkpoint_path}")
     print(f"Model final: {final_model_path}")
+    if args.finetune_epochs > 0:
+        print(f"Model fine-tuned terbaik: {finetuned_checkpoint_path}")
+        print(f"Model fine-tuned final: {finetuned_final_model_path}")
     print(f"Test metrics: {metrics}")
     return 0
 
