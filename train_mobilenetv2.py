@@ -7,7 +7,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence, cast
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -205,7 +205,7 @@ def write_history(histories: Sequence[tuple[int, dict[str, list[float]]]], outpu
         for phase, history in histories:
             rows = max((len(values) for values in history.values()), default=0)
             for index in range(rows):
-                row = {"phase": phase, "epoch": index + 1}
+                row: dict[str, object] = {"phase": phase, "epoch": index + 1}
                 for metric_name in metric_names:
                     values = history.get(metric_name, [])
                     row[metric_name] = values[index] if index < len(values) else ""
@@ -330,7 +330,7 @@ def unfreeze_last_layers(base_model, layer_count: int) -> None:
         layer.trainable = True
 
 
-def save_evaluation_outputs(model, test_ds, class_names: Sequence[str], output_dir: Path) -> dict[str, object]:
+def save_evaluation_outputs(model, test_ds, class_names: Sequence[str], output_dir: Path) -> dict[str, Any]:
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -352,20 +352,26 @@ def save_evaluation_outputs(model, test_ds, class_names: Sequence[str], output_d
 
     labels = list(range(len(class_names)))
     matrix = confusion_matrix(y_true, y_pred, labels=labels)
-    report_text = classification_report(
-        y_true,
-        y_pred,
-        labels=labels,
-        target_names=list(class_names),
-        zero_division=0,
+    report_text = cast(
+        str,
+        classification_report(
+            y_true,
+            y_pred,
+            labels=labels,
+            target_names=list(class_names),
+            zero_division=cast(Any, 0),
+        ),
     )
-    report_dict = classification_report(
-        y_true,
-        y_pred,
-        labels=labels,
-        target_names=list(class_names),
-        zero_division=0,
-        output_dict=True,
+    report_dict = cast(
+        dict[str, Any],
+        classification_report(
+            y_true,
+            y_pred,
+            labels=labels,
+            target_names=list(class_names),
+            zero_division=cast(Any, 0),
+            output_dict=True,
+        ),
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -402,18 +408,22 @@ def save_evaluation_outputs(model, test_ds, class_names: Sequence[str], output_d
     print("Classification report:")
     print(report_text)
 
-    per_class_accuracy = {
-        class_name: float(report_dict[class_name]["recall"]) for class_name in class_names
-    }
+    per_class_accuracy: dict[str, float] = {}
+    for class_name in class_names:
+        class_report = report_dict.get(class_name, {})
+        if isinstance(class_report, dict):
+            per_class_accuracy[class_name] = float(class_report.get("recall", 0.0))
+        else:
+            per_class_accuracy[class_name] = 0.0
     return {
         "per_class_accuracy": per_class_accuracy,
         "classification_report": report_dict,
     }
 
 
-def evaluate_and_save(model, test_ds, class_names: Sequence[str], output_dir: Path) -> dict[str, object]:
+def evaluate_and_save(model, test_ds, class_names: Sequence[str], output_dir: Path) -> dict[str, Any]:
     metrics = model.evaluate(test_ds, return_dict=True)
-    metrics = {name: float(value) for name, value in metrics.items()}
+    metrics: dict[str, Any] = {str(name): float(value) for name, value in metrics.items()}
     evaluation_outputs = save_evaluation_outputs(model, test_ds, class_names, output_dir)
     metrics.update(evaluation_outputs)
     write_json(metrics, output_dir / "test_metrics.json")
@@ -496,7 +506,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     for item in summary:
         warning_parts = []
         if item["invalid_images"]:
-            warning_parts.append(f"invalid image dilewati: {', '.join(item['invalid_images'])}")
+            invalid_images = item["invalid_images"]
+            if isinstance(invalid_images, list):
+                warning_parts.append(f"invalid image dilewati: {', '.join(str(path) for path in invalid_images)}")
         if item["warning"]:
             warning_parts.append(str(item["warning"]))
         warning = f" | WARNING: {'; '.join(warning_parts)}" if warning_parts else ""

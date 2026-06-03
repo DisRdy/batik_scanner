@@ -1,4 +1,4 @@
-﻿# Batik Scanner - Klasifikasi Motif Batik dengan MobileNetV2
+# Batik Scanner - Klasifikasi Motif Batik dengan MobileNetV2
 
 Proyek ini adalah sistem **image recognition** untuk mengenali motif batik dari gambar. Model yang digunakan adalah **MobileNetV2** dengan pendekatan **transfer learning** untuk mengklasifikasikan gambar ke dalam 4 kategori:
 
@@ -7,19 +7,21 @@ Proyek ini adalah sistem **image recognition** untuk mengenali motif batik dari 
 - `batik-parang`
 - `batik-kawung`
 
-Tujuan utama proyek ini adalah membuat pipeline yang jelas dan dapat dijalankan ulang, mulai dari pembagian dataset, training model, validasi, evaluasi test set, sampai penyimpanan model hasil training.
+Proyek ini dirancang agar pipeline dapat dijalankan ulang secara jelas, mulai dari validasi dataset, pembagian data, training model, fine-tuning, evaluasi test set, sampai penyimpanan model dan laporan evaluasi.
 
 ## Ringkasan Sistem
 
-Sistem bekerja dengan alur berikut:
+Alur kerja sistem:
 
 1. Membaca gambar dari folder `dataset`.
-2. Mengurutkan file gambar secara natural, misalnya `1.jpg`, `2.jpg`, `3.jpg`, bukan urutan alfabet seperti `1.jpg`, `10.jpg`, `11.jpg`.
-3. Membagi dataset per kategori menjadi training, validation, dan test set.
-4. Melakukan preprocessing gambar ke ukuran `224x224` pixel.
-5. Melatih model MobileNetV2 menggunakan transfer learning.
-6. Menyimpan model terbaik dan model final ke folder `artifacts`.
-7. Mengevaluasi model menggunakan test set.
+2. Memvalidasi file gambar dari header file agar file rusak atau bukan gambar tidak ikut diproses.
+3. Mengurutkan file gambar secara natural dan deterministik.
+4. Membagi dataset menjadi training, validation, dan test set.
+5. Melakukan preprocessing gambar ke ukuran `224x224` pixel.
+6. Melatih model MobileNetV2 dengan transfer learning.
+7. Melakukan fine-tuning pada layer akhir MobileNetV2.
+8. Mengevaluasi model dengan test set.
+9. Menyimpan model, metrics, classification report, dan confusion matrix ke folder `artifacts`.
 
 ## Model yang Digunakan
 
@@ -28,23 +30,23 @@ Model utama yang digunakan adalah **MobileNetV2** dari TensorFlow Keras.
 MobileNetV2 dipilih karena:
 
 - ringan dan efisien untuk image classification,
-- cocok untuk perangkat dengan resource terbatas,
-- sudah umum digunakan sebagai feature extractor,
-- dapat menggunakan pretrained weights dari ImageNet,
-- cocok untuk transfer learning pada dataset kecil.
+- cocok untuk transfer learning,
+- dapat memakai pretrained weights dari ImageNet,
+- lebih hemat resource dibanding arsitektur CNN besar,
+- cocok untuk dataset yang jumlah gambarnya masih terbatas.
 
-Arsitektur yang digunakan pada script:
+Arsitektur model pada script:
 
 ```text
 Input image 224x224x3
 -> Data augmentation
--> MobileNetV2 pretrained ImageNet tanpa top layer
+-> MobileNetV2 include_top=False
 -> GlobalAveragePooling2D
 -> Dropout
 -> Dense softmax 4 kelas
 ```
 
-Bagian MobileNetV2 digunakan sebagai **feature extractor**. Pada training saat ini, layer MobileNetV2 dibuat `trainable = False`, sehingga model hanya melatih classifier head di bagian akhir. Pendekatan ini cocok untuk dataset kecil karena mengurangi risiko overfitting.
+MobileNetV2 digunakan sebagai feature extractor. Classifier head di bagian akhir digunakan untuk memetakan fitur gambar ke 4 kelas batik.
 
 ## Struktur Folder
 
@@ -58,11 +60,15 @@ batik_scanner/
 |-- artifacts/
 |   |-- batik_mobilenetv2_best.keras
 |   |-- batik_mobilenetv2_final.keras
+|   |-- batik_mobilenetv2_finetuned_best.keras
+|   |-- batik_mobilenetv2_finetuned_final.keras
 |   |-- class_names.json
 |   |-- split_manifest.csv
 |   |-- split_summary.json
+|   |-- training_history.csv
 |   |-- test_metrics.json
-|   `-- training_history.csv
+|   |-- classification_report.txt
+|   `-- confusion_matrix.png
 |-- train_mobilenetv2.py
 |-- requirements.txt
 |-- MOBILENETV2.md
@@ -71,51 +77,67 @@ batik_scanner/
 
 Keterangan:
 
-- `dataset/`: berisi gambar batik yang dikelompokkan berdasarkan kelas.
-- `train_mobilenetv2.py`: script utama untuk split dataset, training, dan evaluasi model.
-- `requirements.txt`: daftar dependency Python.
-- `artifacts/`: folder output hasil training dan evaluasi. Folder ini dibuat otomatis saat script dijalankan.
-- `MOBILENETV2.md`: catatan teknis singkat khusus pipeline MobileNetV2.
+- `dataset/`: folder dataset gambar batik per kelas.
+- `train_mobilenetv2.py`: script utama untuk split dataset, training, fine-tuning, dan evaluasi.
+- `requirements.txt`: dependency Python.
+- `artifacts/`: output hasil split, model, metrics, dan laporan evaluasi.
+- `MOBILENETV2.md`: catatan teknis tambahan untuk pipeline MobileNetV2.
 
 ## Dataset
 
-Dataset disusun dalam 4 folder kelas:
+Dataset disusun berdasarkan nama folder kelas:
 
-| Kelas | Folder |
-| --- | --- |
-| Batik Bali | `dataset/batik-bali` |
-| Batik Megamendung | `dataset/batik-megamendung` |
-| Batik Parang | `dataset/batik-parang` |
-| Batik Kawung | `dataset/batik-kawung` |
+| Class Index | Kelas | Folder |
+| ---: | --- | --- |
+| 0 | Batik Bali | `dataset/batik-bali` |
+| 1 | Batik Megamendung | `dataset/batik-megamendung` |
+| 2 | Batik Parang | `dataset/batik-parang` |
+| 3 | Batik Kawung | `dataset/batik-kawung` |
 
-Split dataset dilakukan per kelas dengan aturan:
+## Dynamic Split Dataset
 
-| Split | Jumlah yang Diambil |
-| --- | --- |
-| Training | 30 gambar pertama |
-| Validation | 10 gambar setelah training |
-| Test | maksimal 10 gambar terakhir yang tersisa |
+Script menggunakan dynamic split secara default. Artinya, jumlah data training, validation, dan test ditentukan berdasarkan jumlah gambar valid pada setiap kelas.
 
-Pembagian ini bersifat deterministik, bukan random. Artinya, selama isi folder dataset sama, hasil split akan selalu sama.
+Aturan dynamic split:
+
+| Tier | Syarat jumlah gambar valid | Train | Validation | Test |
+| --- | ---: | ---: | ---: | ---: |
+| `80+` | `>= 80` | 60 | 15 | maksimal 15 |
+| `50+` | `>= 50` | 30 | 10 | maksimal 10 |
+| `<50` | `< 50` | 30 | 10 | maksimal 10 |
+
+Jika sisa gambar setelah train dan validation lebih sedikit dari target test, semua sisa gambar akan dipakai sebagai test set. Tidak ada gambar yang dipakai di lebih dari satu split.
+
+Untuk menjalankan split dinamis:
+
+```powershell
+.\.venv\Scripts\python.exe train_mobilenetv2.py --split-only --dynamic-split
+```
+
+Untuk memakai split fixed lama berdasarkan `--train-count`, `--val-count`, dan `--test-count`:
+
+```powershell
+.\.venv\Scripts\python.exe train_mobilenetv2.py --split-only --no-dynamic-split
+```
 
 ## Kondisi Dataset Saat Ini
 
 Jumlah data aktual setelah validasi file gambar:
 
-| Kelas | Total File | File Valid | Train | Validation | Test | Catatan |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| `batik-bali` | 50 | 50 | 30 | 10 | 10 | lengkap |
-| `batik-megamendung` | 47 | 46 | 30 | 10 | 6 | `49.jpg` bukan file gambar valid |
-| `batik-parang` | 50 | 50 | 30 | 10 | 10 | lengkap |
-| `batik-kawung` | 45 | 45 | 30 | 10 | 5 | test kurang dari 10 karena data tidak cukup |
+| Kelas | Tier | Total File | File Valid | Train | Validation | Test | Unused | Catatan |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `batik-bali` | `50+` | 50 | 50 | 30 | 10 | 10 | 0 | lengkap |
+| `batik-megamendung` | `<50` | 47 | 46 | 30 | 10 | 6 | 0 | `49.jpg` bukan file gambar valid |
+| `batik-parang` | `80+` | 94 | 94 | 60 | 15 | 15 | 4 | data lebih banyak |
+| `batik-kawung` | `80+` | 88 | 88 | 60 | 15 | 13 | 0 | test 13 karena sisa data setelah train dan validation hanya 13 |
 
-Catatan penting: file `dataset/batik-megamendung/49.jpg` memiliki ekstensi `.jpg`, tetapi isinya bukan gambar valid. Script akan melewati file ini secara otomatis agar proses training dan evaluasi tidak gagal.
+Catatan: file `dataset/batik-megamendung/49.jpg` memiliki ekstensi `.jpg`, tetapi isinya bukan gambar valid. Script otomatis melewati file ini.
 
 ## Instalasi
 
-Gunakan Python virtual environment yang sudah tersedia atau buat virtual environment baru.
+Gunakan virtual environment yang tersedia atau buat environment baru.
 
-Untuk install dependency:
+Install dependency:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -125,34 +147,33 @@ Dependency utama:
 
 ```text
 tensorflow
+scikit-learn
+matplotlib
 ```
 
-## Cara Mengecek Split Dataset
+## Cara Menjalankan Split Dataset
 
-Untuk membuat manifest split tanpa training:
+Untuk membuat ulang manifest split tanpa training:
 
 ```powershell
-.\.venv\Scripts\python.exe train_mobilenetv2.py --split-only
+.\.venv\Scripts\python.exe train_mobilenetv2.py --split-only --dynamic-split
 ```
 
-Output yang dibuat:
+Output:
 
-- `artifacts/split_manifest.csv`: daftar semua gambar yang masuk train, validation, dan test.
+- `artifacts/split_manifest.csv`: daftar gambar, split, class index, class name, tier, dan path.
 - `artifacts/split_summary.json`: ringkasan jumlah data per kelas.
-- `artifacts/class_names.json`: urutan nama kelas yang digunakan model.
-
-Urutan kelas default:
-
-| Class Index | Class Name |
-| ---: | --- |
-| 0 | `batik-bali` |
-| 1 | `batik-megamendung` |
-| 2 | `batik-parang` |
-| 3 | `batik-kawung` |
+- `artifacts/class_names.json`: urutan nama kelas yang dipakai model.
 
 ## Cara Training Model
 
-Jalankan command berikut:
+Training penuh dengan dynamic split:
+
+```powershell
+.\.venv\Scripts\python.exe train_mobilenetv2.py --epochs 15 --finetune-epochs 20 --patience 6 --dynamic-split
+```
+
+Command sederhana juga tetap bisa digunakan:
 
 ```powershell
 .\.venv\Scripts\python.exe train_mobilenetv2.py --epochs 12
@@ -163,159 +184,136 @@ Secara default script akan:
 - menggunakan image size `224`,
 - menggunakan batch size `16`,
 - menggunakan pretrained weights `imagenet`,
-- menjalankan data augmentation,
-- menyimpan checkpoint model terbaik berdasarkan `val_accuracy`,
-- melakukan early stopping jika validation accuracy tidak membaik.
+- memakai dynamic split,
+- memakai data augmentation,
+- menghitung class weights otomatis dari jumlah sample training aktual,
+- menjalankan training phase 1,
+- menjalankan fine-tuning phase 2 jika `--finetune-epochs > 0`,
+- menyimpan model dan hasil evaluasi ke `artifacts`.
 
-Output training:
+## Strategi Training Dua Fase
 
-- `artifacts/batik_mobilenetv2_best.keras`: model terbaik berdasarkan validation accuracy.
-- `artifacts/batik_mobilenetv2_final.keras`: model final setelah training selesai.
-- `artifacts/training_history.csv`: riwayat accuracy dan loss tiap epoch.
-- `artifacts/test_metrics.json`: hasil evaluasi pada test set.
+### Phase 1: Training Classifier Head
 
-Jika tidak ingin menggunakan pretrained ImageNet weights:
+Pada phase 1:
 
-```powershell
-.\.venv\Scripts\python.exe train_mobilenetv2.py --weights none
+- MobileNetV2 base dibekukan dengan `trainable = False`.
+- Model hanya melatih classifier head.
+- Learning rate default: `0.0003`.
+- EarlyStopping memakai monitor `val_accuracy`.
+- Model terbaik disimpan sebagai `batik_mobilenetv2_best.keras`.
+- Model final phase 1 disimpan sebagai `batik_mobilenetv2_final.keras`.
+
+### Phase 2: Fine-Tuning
+
+Pada phase 2:
+
+- 30 layer terakhir MobileNetV2 di-unfreeze.
+- Learning rate diturunkan menjadi `learning_rate * 0.1`.
+- Jumlah epoch tambahan diatur dengan `--finetune-epochs`.
+- Model terbaik disimpan sebagai `batik_mobilenetv2_finetuned_best.keras`.
+- Model final fine-tuned disimpan sebagai `batik_mobilenetv2_finetuned_final.keras`.
+
+Phase 2 hanya berjalan jika `--finetune-epochs` lebih besar dari 0.
+
+## Data Augmentation
+
+Saat training, gambar diberi augmentasi:
+
+- `RandomFlip("horizontal_and_vertical")`
+- `RandomRotation(0.2)`
+- `RandomZoom(0.2)`
+- `RandomContrast(0.2)`
+- `RandomBrightness(0.2)`
+
+Augmentasi membantu model melihat variasi gambar yang lebih banyak dari dataset yang tersedia.
+
+## Class Weights
+
+Class weights dihitung otomatis menggunakan:
+
+```python
+from sklearn.utils.class_weight import compute_class_weight
 ```
 
-## Cara Evaluasi Model yang Sudah Ada
+Perhitungan dilakukan berdasarkan jumlah sample training aktual setelah dynamic split. Dengan dataset saat ini, jumlah training per kelas adalah:
 
-Jika model sudah pernah dilatih, evaluasi ulang dapat dilakukan tanpa training ulang:
+```text
+batik-bali        : 30
+batik-megamendung : 30
+batik-parang      : 60
+batik-kawung      : 60
+```
+
+Karena jumlah training tidak sama, class weights membantu model agar kelas dengan data lebih sedikit tetap mendapat perhatian saat training.
+
+## Callback Training
+
+Callback yang digunakan:
+
+- `ModelCheckpoint`: menyimpan model terbaik berdasarkan `val_accuracy`.
+- `EarlyStopping`: menghentikan training jika validation accuracy tidak membaik.
+- `ReduceLROnPlateau`: menurunkan learning rate jika `val_loss` stagnan.
+
+Konfigurasi `ReduceLROnPlateau`:
+
+```text
+monitor = val_loss
+factor = 0.5
+patience = 2
+min_lr = 1e-7
+```
+
+## Evaluasi Model
+
+Evaluasi model yang sudah tersimpan:
+
+```powershell
+.\.venv\Scripts\python.exe train_mobilenetv2.py --evaluate-model artifacts\batik_mobilenetv2_finetuned_final.keras
+```
+
+Jika hanya ada model phase 1:
 
 ```powershell
 .\.venv\Scripts\python.exe train_mobilenetv2.py --evaluate-model artifacts\batik_mobilenetv2_final.keras
 ```
 
-Hasil evaluasi akan disimpan ke:
+Output evaluasi:
 
-```text
-artifacts/test_metrics.json
-```
+- `artifacts/test_metrics.json`: accuracy, loss, per-class accuracy, dan classification report dalam format JSON.
+- `artifacts/classification_report.txt`: precision, recall, f1-score, dan support per kelas.
+- `artifacts/confusion_matrix.png`: visualisasi confusion matrix.
 
-## Hasil Training Saat Ini
-
-Training terakhir menghasilkan ringkasan berikut:
-
-| Metrik | Nilai |
-| --- | ---: |
-| Training accuracy akhir | 0.7500 |
-| Validation accuracy akhir | 0.4500 |
-| Test accuracy | 0.5161 |
-| Test loss | 1.1948 |
-
-Interpretasi:
-
-- Model sudah dapat belajar dari data training, terlihat dari training accuracy yang naik sampai sekitar 75%.
-- Validation accuracy masih sekitar 45%, menunjukkan kemampuan generalisasi model masih terbatas.
-- Test accuracy sekitar 51.61% pada test set valid yang berjumlah 31 gambar.
-- Hasil ini wajar untuk dataset yang kecil dan tidak seimbang, terutama karena kelas `batik-megamendung` dan `batik-kawung` tidak memiliki cukup gambar untuk test set penuh 10 gambar.
-
-## Cara Kerja Script `train_mobilenetv2.py`
-
-Script utama memiliki beberapa bagian penting.
-
-### 1. Validasi File Gambar
-
-Script memeriksa header file untuk memastikan file benar-benar berupa gambar yang bisa dibaca, seperti JPEG, PNG, GIF, BMP, atau WebP.
-
-Tujuannya agar file yang memiliki ekstensi gambar tetapi isinya rusak atau bukan gambar tidak menyebabkan proses training gagal.
-
-### 2. Natural Sorting
-
-File gambar diurutkan secara natural. Contoh:
-
-```text
-1.jpg, 2.jpg, 3.jpg, ..., 10.jpg
-```
-
-Hal ini penting karena permintaan split dataset menggunakan "30 image pertama", "10 selanjutnya", dan "10 terakhir".
-
-### 3. Split Dataset
-
-Setiap kelas diproses secara terpisah:
-
-```text
-train      = gambar urutan 1 sampai 30
-validation = gambar urutan 31 sampai 40
-test       = sisa gambar terakhir sampai maksimal 10
-```
-
-Tidak ada gambar yang dipakai di lebih dari satu split.
-
-### 4. Preprocessing Gambar
-
-Setiap gambar:
-
-- dibaca dari path file,
-- didecode menjadi tensor RGB,
-- diresize ke `224x224`,
-- dikonversi ke `float32`,
-- diproses menggunakan `mobilenet_v2.preprocess_input`.
-
-### 5. Data Augmentation
-
-Saat training, gambar diberi augmentasi sederhana:
-
-- `RandomFlip("horizontal")`
-- `RandomRotation(0.08)`
-- `RandomZoom(0.12)`
-
-Augmentasi membantu model melihat variasi gambar yang lebih banyak dari dataset kecil.
-
-### 6. Training dan Checkpoint
-
-Model dilatih dengan:
-
-- optimizer: Adam,
-- loss: Sparse Categorical Crossentropy,
-- metric: Accuracy,
-- callback: ModelCheckpoint,
-- callback: EarlyStopping.
-
-Model terbaik disimpan berdasarkan validation accuracy.
+Catatan: setelah dataset berubah, model lama sebaiknya dievaluasi ulang atau dilatih ulang agar metrics sesuai split terbaru.
 
 ## Parameter Penting
-
-Beberapa parameter dapat diubah saat menjalankan script:
 
 | Parameter | Fungsi | Default |
 | --- | --- | --- |
 | `--dataset-dir` | lokasi dataset | `dataset` |
-| `--output-dir` | lokasi output model dan metrics | `artifacts` |
-| `--train-count` | jumlah data training per kelas | `30` |
-| `--val-count` | jumlah data validation per kelas | `10` |
-| `--test-count` | jumlah maksimal data test per kelas | `10` |
+| `--output-dir` | lokasi output | `artifacts` |
+| `--dynamic-split` | memakai split dinamis | aktif |
+| `--no-dynamic-split` | memakai split fixed lama | tidak aktif |
+| `--train-count` | train count untuk fixed split | `30` |
+| `--val-count` | validation count untuk fixed split | `10` |
+| `--test-count` | test count untuk fixed split | `10` |
 | `--image-size` | ukuran input gambar | `224` |
-| `--batch-size` | ukuran batch training | `16` |
-| `--epochs` | jumlah epoch maksimum | `12` |
-| `--patience` | batas early stopping | `4` |
-| `--learning-rate` | learning rate optimizer Adam | `0.0003` |
+| `--batch-size` | batch size | `16` |
+| `--epochs` | epoch phase 1 | `12` |
+| `--finetune-epochs` | epoch phase 2 | `10` |
+| `--patience` | patience EarlyStopping | `4` |
+| `--dropout` | dropout classifier head | `0.25` |
+| `--learning-rate` | learning rate phase 1 | `0.0003` |
 | `--weights` | pretrained weights | `imagenet` |
 
-Contoh mengubah jumlah epoch:
-
-```powershell
-.\.venv\Scripts\python.exe train_mobilenetv2.py --epochs 20
-```
-
-Contoh strict test count, yaitu proses akan error jika setiap kelas tidak memiliki 10 data test:
-
-```powershell
-.\.venv\Scripts\python.exe train_mobilenetv2.py --strict-test-count
-```
-
-## Contoh Penggunaan Model untuk Prediksi
-
-Contoh sederhana untuk memuat model dan melakukan prediksi satu gambar:
+## Contoh Prediksi Satu Gambar
 
 ```python
 import json
 import numpy as np
 import tensorflow as tf
 
-model = tf.keras.models.load_model("artifacts/batik_mobilenetv2_final.keras")
+model = tf.keras.models.load_model("artifacts/batik_mobilenetv2_finetuned_final.keras")
 class_names = json.loads(open("artifacts/class_names.json", encoding="utf-8").read())
 
 image_path = "dataset/batik-bali/41.jpg"
@@ -331,19 +329,19 @@ confidence = float(predictions[0][predicted_index])
 print(class_names[predicted_index], confidence)
 ```
 
-## Catatan untuk Pengembangan Selanjutnya
+## Catatan Pengembangan Selanjutnya
 
-Beberapa hal yang dapat meningkatkan performa model:
+Beberapa pengembangan yang dapat dilakukan:
 
-- Menambah jumlah gambar untuk setiap kelas agar dataset lebih seimbang.
-- Mengganti file invalid `batik-megamendung/49.jpg` dengan gambar yang benar.
-- Menambahkan confusion matrix agar kesalahan prediksi antar kelas lebih mudah dianalisis.
-- Melakukan fine-tuning beberapa layer akhir MobileNetV2 setelah classifier head stabil.
-- Menambah data augmentation yang sesuai dengan karakter motif batik.
-- Membuat script khusus inference, misalnya `predict.py`, agar prediksi gambar baru lebih mudah dilakukan.
+- Melatih ulang model setelah update dataset Parang dan Kawung.
+- Menambah gambar untuk `batik-megamendung` agar jumlah data lebih seimbang.
+- Mengganti file invalid `batik-megamendung/49.jpg` dengan gambar valid.
+- Menganalisis `confusion_matrix.png` untuk melihat kelas yang sering tertukar.
+- Membuat script inference terpisah, misalnya `predict.py`.
+- Membuat antarmuka aplikasi untuk upload gambar batik dan menampilkan prediksi.
 
 ## Kesimpulan
 
-Proyek ini menggunakan MobileNetV2 sebagai model klasifikasi gambar untuk mengenali empat motif batik. Dataset dibagi secara deterministik sesuai urutan file: 30 gambar pertama sebagai training set, 10 gambar berikutnya sebagai validation set, dan maksimal 10 gambar terakhir sebagai test set. Pipeline sudah mencakup validasi file gambar, preprocessing, data augmentation, training, checkpoint model, dan evaluasi test set.
+Proyek ini menggunakan MobileNetV2 transfer learning untuk mengenali motif Batik Bali, Megamendung, Parang, dan Kawung. Script sudah mendukung validasi file gambar, natural sorting, dynamic split per kelas, class weights otomatis, training dua fase, fine-tuning, evaluasi dengan classification report, dan confusion matrix.
 
-Karena dataset masih kecil dan beberapa kelas memiliki jumlah gambar kurang dari 50, hasil akurasi belum maksimal. Namun struktur sistem sudah siap untuk dikembangkan lebih lanjut dengan penambahan dataset, fine-tuning, dan evaluasi yang lebih detail.
+Dengan update dataset terbaru, `batik-parang` dan `batik-kawung` otomatis masuk tier `80+`, sehingga keduanya mendapat porsi training yang lebih besar. Pipeline tetap deterministik dan dapat dijalankan ulang dengan command yang sama.
