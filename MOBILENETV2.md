@@ -44,6 +44,12 @@ Output split disimpan ke:
 .\.venv\Scripts\python.exe train_mobilenetv2.py --epochs 12
 ```
 
+Untuk split custom dengan train 21-50 dan fine tuning:
+
+```powershell
+.\.venv\Scripts\python.exe train_mobilenetv2.py --split-strategy custom --train-start 21 --train-end 50 --val-count 10 --test-count 10 --epochs 30 --fine-tune --fine-tune-epochs 20 --fine-tune-layers 100 --batch-size 4 --learning-rate 0.0001 --fine-tune-learning-rate 1e-5 --dropout 0.4
+```
+
 Hasil training disimpan ke folder `artifacts`:
 
 - `batik_mobilenetv2_best.keras`

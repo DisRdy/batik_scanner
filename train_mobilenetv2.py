@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import imghdr
 import json
 import re
 import sys
@@ -39,6 +40,13 @@ def natural_key(path: Path) -> tuple[object, ...]:
     return tuple(key)
 
 
+def is_valid_image(path: Path) -> bool:
+    try:
+        return imghdr.what(path) is not None
+    except OSError:
+        return False
+
+
 def collect_images(class_dir: Path) -> list[Path]:
     if not class_dir.exists():
         raise FileNotFoundError(f"Folder kelas tidak ditemukan: {class_dir}")
@@ -47,7 +55,21 @@ def collect_images(class_dir: Path) -> list[Path]:
         for path in class_dir.iterdir()
         if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
     ]
-    return sorted(images, key=natural_key)
+    valid_images = []
+    invalid_images = []
+    for path in sorted(images, key=natural_key):
+        if is_valid_image(path):
+            valid_images.append(path)
+        else:
+            invalid_images.append(path)
+
+    if invalid_images:
+        invalid_names = ", ".join(p.name for p in invalid_images)
+        print(
+            f"WARNING: Mengabaikan {len(invalid_images)} file tidak valid di {class_dir.name}: {invalid_names}"
+        )
+
+    return valid_images
 
 
 def build_split(
@@ -111,6 +133,77 @@ def build_split(
     return split_items, summary
 
 
+def build_split_custom(
+    dataset_dir: Path,
+    class_dirs: Sequence[str],
+    train_start: int,
+    train_end: int,
+    val_count: int,
+    test_count: int,
+    strict_test_count: bool,
+) -> tuple[list[SplitItem], list[dict[str, object]]]:
+    split_items: list[SplitItem] = []
+    summary: list[dict[str, object]] = []
+
+    for class_index, class_name in enumerate(class_dirs):
+        images = collect_images(dataset_dir / class_name)
+        if len(images) < val_count + test_count:
+            raise ValueError(
+                f"Kelas {class_name} hanya punya {len(images)} gambar; "
+                f"butuh minimal {val_count + test_count} untuk validation+test."
+            )
+
+        val_images = images[:val_count]
+        test_images = images[val_count : val_count + test_count]
+
+        if train_start <= val_count + test_count:
+            raise ValueError(
+                "train_start harus berada setelah validation dan test, "
+                "agar tidak terjadi overlap antara split."
+            )
+
+        train_start_idx = train_start - 1
+        train_end_idx = min(train_end, len(images))
+        train_images = images[train_start_idx:train_end_idx]
+
+        if strict_test_count and len(test_images) < test_count:
+            raise ValueError(
+                f"Kelas {class_name} hanya punya {len(test_images)} gambar test tanpa overlap; "
+                f"butuh {test_count}."
+            )
+
+        used_indices = set(range(0, val_count)) | set(range(val_count, val_count + len(test_images))) | set(range(train_start_idx, train_end_idx))
+        unused_images = [image for index, image in enumerate(images) if index not in used_indices]
+
+        for split_name, paths in (
+            ("train", train_images),
+            ("validation", val_images),
+            ("test", test_images),
+        ):
+            split_items.extend(
+                SplitItem(split_name, class_index, class_name, path) for path in paths
+            )
+
+        summary.append(
+            {
+                "class_name": class_name,
+                "total_images": len(images),
+                "train": len(train_images),
+                "validation": len(val_images),
+                "test": len(test_images),
+                "unused": len(unused_images),
+                "warning": (
+                    f"test set kurang dari {test_count} karena total gambar kurang dari "
+                    f"{val_count + test_count + train_end - train_start + 1}"
+                    if len(test_images) < test_count
+                    else ""
+                ),
+            }
+        )
+
+    return split_items, summary
+
+
 def write_manifest(split_items: Sequence[SplitItem], output_path: Path, root: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as handle:
@@ -149,6 +242,14 @@ def write_history(history: dict[str, list[float]], output_path: Path) -> None:
             writer.writerow(row)
 
 
+def merge_history(*histories: dict[str, list[float]]) -> dict[str, list[float]]:
+    merged: dict[str, list[float]] = {}
+    for history in histories:
+        for key, values in history.items():
+            merged.setdefault(key, []).extend(values)
+    return merged
+
+
 def import_tensorflow():
     try:
         import tensorflow as tf
@@ -182,13 +283,37 @@ def make_dataset(tf, items: Sequence[SplitItem], image_size: int, batch_size: in
     )
 
 
-def build_model(tf, image_size: int, num_classes: int, weights: str | None, dropout: float, learning_rate: float):
+def get_sparse_categorical_loss(tf, label_smoothing: float):
+    try:
+        return tf.keras.losses.SparseCategoricalCrossentropy(label_smoothing=label_smoothing)
+    except TypeError:
+        if label_smoothing != 0.0:
+            print(
+                "WARNING: label_smoothing is not supported by the installed TensorFlow version. "
+                "Falling back to SparseCategoricalCrossentropy without label smoothing."
+            )
+        return tf.keras.losses.SparseCategoricalCrossentropy()
+
+
+def build_model(
+    tf,
+    image_size: int,
+    num_classes: int,
+    weights: str | None,
+    dropout: float,
+    learning_rate: float,
+    dense_units: int,
+    label_smoothing: float,
+    weight_decay: float,
+):
     inputs = tf.keras.Input(shape=(image_size, image_size, 3), name="image")
     x = tf.keras.Sequential(
         [
             tf.keras.layers.RandomFlip("horizontal"),
-            tf.keras.layers.RandomRotation(0.08),
-            tf.keras.layers.RandomZoom(0.12),
+            tf.keras.layers.RandomRotation(0.12),
+            tf.keras.layers.RandomZoom(0.14),
+            tf.keras.layers.RandomTranslation(0.08, 0.08),
+            tf.keras.layers.RandomContrast(0.12),
         ],
         name="augmentation",
     )(inputs)
@@ -203,15 +328,33 @@ def build_model(tf, image_size: int, num_classes: int, weights: str | None, drop
 
     x = base_model(x, training=False)
     x = tf.keras.layers.GlobalAveragePooling2D(name="avg_pool")(x)
+    x = tf.keras.layers.BatchNormalization(name="bn_pool")(x)
     x = tf.keras.layers.Dropout(dropout, name="dropout")(x)
+    x = tf.keras.layers.Dense(
+        dense_units,
+        activation="relu",
+        kernel_regularizer=tf.keras.regularizers.l2(1e-4),
+        name="dense",
+    )(x)
+    x = tf.keras.layers.BatchNormalization(name="bn_dense")(x)
+    x = tf.keras.layers.Dropout(dropout * 0.5, name="dropout_2")(x)
     outputs = tf.keras.layers.Dense(num_classes, activation="softmax", name="predictions")(x)
     model = tf.keras.Model(inputs, outputs, name="batik_mobilenetv2")
+
+    if weight_decay > 0 and hasattr(tf.keras.optimizers, "AdamW"):
+        optimizer = tf.keras.optimizers.AdamW(
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+        )
+    else:
+        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        optimizer=optimizer,
+        loss=get_sparse_categorical_loss(tf, label_smoothing),
         metrics=["accuracy"],
     )
-    return model
+    return model, base_model
 
 
 def filter_split(items: Sequence[SplitItem], split_name: str) -> list[SplitItem]:
@@ -228,8 +371,53 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--train-count", type=int, default=30)
     parser.add_argument("--val-count", type=int, default=10)
     parser.add_argument("--test-count", type=int, default=10)
+    parser.add_argument(
+        "--split-strategy",
+        choices=("default", "custom"),
+        default="default",
+        help="Pilih strategi split dataset: default atau custom.",
+    )
+    parser.add_argument(
+        "--train-start",
+        type=int,
+        default=21,
+        help="Mulai index gambar untuk train split (1-based, hanya untuk strategi custom).",
+    )
+    parser.add_argument(
+        "--train-end",
+        type=int,
+        default=50,
+        help="Akhir index gambar untuk train split (1-based, hanya untuk strategi custom).",
+    )
     parser.add_argument("--strict-test-count", action="store_true")
     parser.add_argument("--split-only", action="store_true")
+    parser.add_argument("--fine-tune", action="store_true")
+    parser.add_argument(
+        "--fine-tune-layers",
+        type=int,
+        default=30,
+        help="Jumlah layer top MobileNetV2 yang di-unfreeze untuk fine tuning.",
+    )
+    parser.add_argument(
+        "--fine-tune-epochs",
+        type=int,
+        default=8,
+        help="Epoch tambahan untuk fine-tuning setelah pelatihan awal.",
+    )
+    parser.add_argument(
+        "--fine-tune-learning-rate",
+        type=float,
+        default=1e-5,
+        help="Learning rate untuk fase fine tuning.",
+    )
+    parser.add_argument("--dense-units", type=int, default=128)
+    parser.add_argument("--label-smoothing", type=float, default=0.0)
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=0.0,
+        help="Optional weight decay for the optimizer if AdamW is available.",
+    )
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=12)
@@ -253,14 +441,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    split_items, summary = build_split(
-        dataset_dir=dataset_dir,
-        class_dirs=args.class_dirs,
-        train_count=args.train_count,
-        val_count=args.val_count,
-        test_count=args.test_count,
-        strict_test_count=args.strict_test_count,
-    )
+    if args.split_strategy == "custom":
+        split_items, summary = build_split_custom(
+            dataset_dir=dataset_dir,
+            class_dirs=args.class_dirs,
+            train_start=args.train_start,
+            train_end=args.train_end,
+            val_count=args.val_count,
+            test_count=args.test_count,
+            strict_test_count=args.strict_test_count,
+        )
+    else:
+        split_items, summary = build_split(
+            dataset_dir=dataset_dir,
+            class_dirs=args.class_dirs,
+            train_count=args.train_count,
+            val_count=args.val_count,
+            test_count=args.test_count,
+            strict_test_count=args.strict_test_count,
+        )
 
     write_manifest(split_items, output_dir / "split_manifest.csv", root)
     write_json(summary, output_dir / "split_summary.json")
@@ -289,13 +488,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     val_ds = make_dataset(tf, val_items, args.image_size, args.batch_size, False, args.seed)
     test_ds = make_dataset(tf, test_items, args.image_size, args.batch_size, False, args.seed)
 
-    model = build_model(
+    model, base_model = build_model(
         tf=tf,
         image_size=args.image_size,
         num_classes=len(args.class_dirs),
         weights=None if args.weights == "none" else args.weights,
         dropout=args.dropout,
         learning_rate=args.learning_rate,
+        dense_units=args.dense_units,
+        label_smoothing=args.label_smoothing,
+        weight_decay=args.weight_decay,
     )
 
     checkpoint_path = output_dir / "batik_mobilenetv2_best.keras"
@@ -314,16 +516,59 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     ]
 
-    history = model.fit(
+    history1 = model.fit(
         train_ds,
         validation_data=val_ds,
         epochs=args.epochs,
         callbacks=callbacks,
     )
 
+    if args.fine_tune:
+        base_model.trainable = True
+        if args.fine_tune_layers is not None:
+            for layer in base_model.layers[:-args.fine_tune_layers]:
+                layer.trainable = False
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=args.fine_tune_learning_rate),
+            loss=get_sparse_categorical_loss(tf, args.label_smoothing),
+            metrics=["accuracy"],
+        )
+
+        fine_tune_callbacks = [
+            tf.keras.callbacks.ModelCheckpoint(
+                filepath=str(checkpoint_path),
+                monitor="val_accuracy",
+                mode="max",
+                save_best_only=True,
+            ),
+            tf.keras.callbacks.EarlyStopping(
+                monitor="val_accuracy",
+                mode="max",
+                patience=args.patience,
+                restore_best_weights=True,
+            ),
+            tf.keras.callbacks.ReduceLROnPlateau(
+                monitor="val_loss",
+                factor=0.5,
+                patience=2,
+                verbose=1,
+                min_lr=1e-7,
+            ),
+        ]
+
+        history2 = model.fit(
+            train_ds,
+            validation_data=val_ds,
+            epochs=args.fine_tune_epochs,
+            callbacks=fine_tune_callbacks,
+        )
+        history = merge_history(history1.history, history2.history)
+    else:
+        history = history1.history
+
     final_model_path = output_dir / "batik_mobilenetv2_final.keras"
     model.save(final_model_path)
-    write_history(history.history, output_dir / "training_history.csv")
+    write_history(history, output_dir / "training_history.csv")
 
     metrics = model.evaluate(test_ds, return_dict=True)
     write_json(metrics, output_dir / "test_metrics.json")
