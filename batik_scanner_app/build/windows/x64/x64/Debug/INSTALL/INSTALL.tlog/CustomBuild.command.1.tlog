@@ -1,0 +1,10 @@
+^C:\USERS\DISNA\ONEDRIVE\DESKTOP\BATIK_SCANNER\BATIK_SCANNER_APP\BUILD\WINDOWS\X64\CMAKEFILES\4FC88BD135816FB8FDA7923424CB7922\INSTALL_FORCE.RULE
+setlocal
+cd .
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

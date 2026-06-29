@@ -1,0 +1,1 @@
+ C:\\Users\\disna\\OneDrive\\Desktop\\batik_scanner\\batik_scanner_app\\.dart_tool\\flutter_build\\a901fcedc71be44b8838bf685f640b91\\native_assets.json: 
