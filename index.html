@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Batik Scanner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f6f7f4;
+        color: #1f2933;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(135deg, rgba(35, 99, 89, 0.12), transparent 38%),
+          linear-gradient(315deg, rgba(190, 80, 55, 0.12), transparent 42%),
+          #f6f7f4;
+      }
+
+      main {
+        width: min(960px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 48px 0;
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+        gap: 24px;
+        align-items: stretch;
+      }
+
+      .panel,
+      .preview-panel {
+        background: rgba(255, 255, 255, 0.86);
+        border: 1px solid rgba(31, 41, 51, 0.12);
+        border-radius: 8px;
+        box-shadow: 0 24px 70px rgba(31, 41, 51, 0.11);
+      }
+
+      .panel {
+        padding: 32px;
+      }
+
+      .preview-panel {
+        overflow: hidden;
+        min-height: 420px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(2rem, 6vw, 4.3rem);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        margin: 0 0 28px;
+        max-width: 54ch;
+        color: #56616b;
+        font-size: 1rem;
+        line-height: 1.65;
+      }
+
+      .drop-zone {
+        position: relative;
+        display: grid;
+        place-items: center;
+        min-height: 190px;
+        padding: 24px;
+        border: 1.5px dashed #8aa59c;
+        border-radius: 8px;
+        background: #fbfcfa;
+        transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+      }
+
+      .drop-zone.is-dragging {
+        border-color: #236359;
+        background: #eef7f3;
+        transform: translateY(-1px);
+      }
+
+      .drop-zone input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+      }
+
+      .drop-copy {
+        display: grid;
+        gap: 8px;
+        text-align: center;
+        pointer-events: none;
+      }
+
+      .drop-copy strong {
+        color: #263238;
+        font-size: 1.05rem;
+      }
+
+      .drop-copy span {
+        color: #67727d;
+        font-size: 0.92rem;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      button {
+        min-height: 44px;
+        border: 0;
+        border-radius: 8px;
+        padding: 0 18px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 150ms ease, opacity 150ms ease, background 150ms ease;
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.58;
+      }
+
+      .primary {
+        color: #ffffff;
+        background: #236359;
+      }
+
+      .secondary {
+        color: #31424d;
+        background: #e7ebe6;
+      }
+
+      .preview {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        min-height: 300px;
+        background: #101817;
+      }
+
+      .preview img {
+        width: 100%;
+        height: 100%;
+        max-height: 420px;
+        object-fit: contain;
+        display: none;
+      }
+
+      .empty-preview {
+        color: #cdd8d4;
+        font-weight: 700;
+      }
+
+      .result {
+        min-height: 122px;
+        padding: 22px;
+        border-top: 1px solid rgba(31, 41, 51, 0.12);
+        background: #ffffff;
+      }
+
+      .label {
+        margin: 0 0 6px;
+        color: #6a747e;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .batik-name {
+        margin: 0;
+        color: #20333a;
+        font-size: 1.7rem;
+        line-height: 1.18;
+        overflow-wrap: anywhere;
+      }
+
+      .confidence {
+        margin: 8px 0 0;
+        color: #be5037;
+        font-size: 1rem;
+        font-weight: 800;
+      }
+
+      .message {
+        margin-top: 14px;
+        min-height: 22px;
+        color: #56616b;
+        font-weight: 650;
+      }
+
+      .message.error {
+        color: #b3261e;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          width: min(100% - 24px, 560px);
+          padding: 24px 0;
+        }
+
+        .shell {
+          grid-template-columns: 1fr;
+        }
+
+        .panel {
+          padding: 24px;
+        }
+
+        .preview-panel {
+          min-height: 360px;
+        }
+
+        button {
+          flex: 1 1 150px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="shell">
+        <section class="panel" aria-labelledby="page-title">
+          <h1 id="page-title">Batik Scanner</h1>
+          <p class="subtitle">Classify Bali, Kawung, Megamendung, and Parang batik from a single image.</p>
+
+          <form id="upload-form">
+            <label class="drop-zone" id="drop-zone">
+              <input id="image-input" name="image" type="file" accept="image/*">
+              <span class="drop-copy">
+                <strong id="file-label">Choose image</strong>
+                <span>JPG, PNG, BMP, WEBP</span>
+              </span>
+            </label>
+
+            <div class="actions">
+              <button class="primary" id="predict-button" type="submit" disabled>Predict</button>
+              <button class="secondary" id="clear-button" type="button" disabled>Clear</button>
+            </div>
+
+            <div class="message" id="message" role="status" aria-live="polite"></div>
+          </form>
+        </section>
+
+        <section class="preview-panel" aria-label="Prediction result">
+          <div class="preview">
+            <img id="preview-image" alt="Selected batik preview">
+            <div class="empty-preview" id="empty-preview">No image selected</div>
+          </div>
+          <div class="result">
+            <p class="label">Prediction</p>
+            <h2 class="batik-name" id="batik-name">Awaiting image</h2>
+            <p class="confidence" id="confidence"></p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const form = document.querySelector("#upload-form");
+      const input = document.querySelector("#image-input");
+      const dropZone = document.querySelector("#drop-zone");
+      const fileLabel = document.querySelector("#file-label");
+      const predictButton = document.querySelector("#predict-button");
+      const clearButton = document.querySelector("#clear-button");
+      const previewImage = document.querySelector("#preview-image");
+      const emptyPreview = document.querySelector("#empty-preview");
+      const message = document.querySelector("#message");
+      const batikName = document.querySelector("#batik-name");
+      const confidence = document.querySelector("#confidence");
+
+      let selectedFile = null;
+      let previewUrl = null;
+
+      function setMessage(text, isError = false) {
+        message.textContent = text;
+        message.classList.toggle("error", isError);
+      }
+
+      function setFile(file) {
+        if (!file) {
+          return;
+        }
+
+        selectedFile = file;
+        fileLabel.textContent = file.name;
+        predictButton.disabled = false;
+        clearButton.disabled = false;
+        batikName.textContent = "Ready";
+        confidence.textContent = "";
+        setMessage("");
+
+        if (previewUrl) {
+          URL.revokeObjectURL(previewUrl);
+        }
+        previewUrl = URL.createObjectURL(file);
+        previewImage.src = previewUrl;
+        previewImage.style.display = "block";
+        emptyPreview.style.display = "none";
+      }
+
+      function clearSelection() {
+        selectedFile = null;
+        input.value = "";
+        fileLabel.textContent = "Choose image";
+        predictButton.disabled = true;
+        clearButton.disabled = true;
+        previewImage.removeAttribute("src");
+        previewImage.style.display = "none";
+        emptyPreview.style.display = "block";
+        batikName.textContent = "Awaiting image";
+        confidence.textContent = "";
+        setMessage("");
+
+        if (previewUrl) {
+          URL.revokeObjectURL(previewUrl);
+          previewUrl = null;
+        }
+      }
+
+      input.addEventListener("change", () => {
+        setFile(input.files[0]);
+      });
+
+      ["dragenter", "dragover"].forEach((eventName) => {
+        dropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          dropZone.classList.add("is-dragging");
+        });
+      });
+
+      ["dragleave", "drop"].forEach((eventName) => {
+        dropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          dropZone.classList.remove("is-dragging");
+        });
+      });
+
+      dropZone.addEventListener("drop", (event) => {
+        setFile(event.dataTransfer.files[0]);
+      });
+
+      clearButton.addEventListener("click", clearSelection);
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!selectedFile) {
+          setMessage("Choose an image first.", true);
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append("image", selectedFile);
+
+        predictButton.disabled = true;
+        setMessage("Predicting...");
+
+        try {
+          const response = await fetch("/predict", {
+            method: "POST",
+            body: formData,
+          });
+          const payload = await response.json();
+
+          if (!response.ok) {
+            throw new Error(payload.error || "Prediction failed.");
+          }
+
+          batikName.textContent = payload.class;
+          confidence.textContent = `${payload.confidence_percent.toFixed(2)}% confidence`;
+          setMessage("Prediction complete.");
+        } catch (error) {
+          batikName.textContent = "Prediction failed";
+          confidence.textContent = "";
+          setMessage(error.message, true);
+        } finally {
+          predictButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
