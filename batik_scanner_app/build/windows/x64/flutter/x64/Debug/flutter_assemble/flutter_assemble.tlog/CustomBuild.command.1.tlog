@@ -1,0 +1,28 @@
+^C:\USERS\DISNA\ONEDRIVE\DESKTOP\BATIK_SCANNER\BATIK_SCANNER_APP\BUILD\WINDOWS\X64\CMAKEFILES\3048673F79DB3BEC592510E5C03C5B46\FLUTTER_WINDOWS.DLL.RULE
+setlocal
+"C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -E env FLUTTER_ROOT=C:\flutter PROJECT_DIR=C:\Users\disna\OneDrive\Desktop\batik_scanner\batik_scanner_app FLUTTER_ROOT=C:\flutter FLUTTER_EPHEMERAL_DIR=C:\Users\disna\OneDrive\Desktop\batik_scanner\batik_scanner_app\windows\flutter\ephemeral PROJECT_DIR=C:\Users\disna\OneDrive\Desktop\batik_scanner\batik_scanner_app FLUTTER_TARGET=C:\Users\disna\OneDrive\Desktop\batik_scanner\batik_scanner_app\lib\main.dart DART_DEFINES=U1VQQUJBU0VfVVJMPWh0dHBzOi8vem1nd3Fud25mbWFnaWlqYmt2bm8uc3VwYWJhc2UuY28=,U1VQQUJBU0VfQU5PTl9LRVk9ZXlKaGJHY2lPaUpJVXpJMU5pSXNJblI1Y0NJNklrcFhWQ0o5LmV5SnBjM01pT2lKemRYQmhZbUZ6WlNJc0luSmxaaUk2SW5wdFozZHhibmR1Wm0xaFoybHBhbUpyZG01dklpd2ljbTlzWlNJNkltRnViMjRpTENKcFlYUWlPakUzT0RFeU5UYzBPVFVzSW1WNGNDSTZNakE1Tmpnek16UTVOWDAuRldrZHVBMDlvdjlhQnNuWXF5S2lwWWNMdjBERk05RE1Eb18ySDA0QW9Ebw==,RkxVVFRFUl9WRVJTSU9OPTMuNDEuNA==,RkxVVFRFUl9DSEFOTkVMPXN0YWJsZQ==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049ZmYzN2JlZjYwMw==,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049ZTRiOGRjYTNmMQ==,RkxVVFRFUl9EQVJUX1ZFUlNJT049My4xMS4x DART_OBFUSCATION=false TRACK_WIDGET_CREATION=true TREE_SHAKE_ICONS=false PACKAGE_CONFIG=C:\Users\disna\OneDrive\Desktop\batik_scanner\batik_scanner_app\.dart_tool\package_config.json C:/flutter/packages/flutter_tools/bin/tool_backend.bat windows-x64 Debug
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\DISNA\ONEDRIVE\DESKTOP\BATIK_SCANNER\BATIK_SCANNER_APP\BUILD\WINDOWS\X64\CMAKEFILES\A03A0D5757344AF5BC2019AB880792B1\FLUTTER_ASSEMBLE.RULE
+setlocal
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+^C:\USERS\DISNA\ONEDRIVE\DESKTOP\BATIK_SCANNER\BATIK_SCANNER_APP\WINDOWS\FLUTTER\CMAKELISTS.TXT
+setlocal
+"C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SC:/Users/disna/OneDrive/Desktop/batik_scanner/batik_scanner_app/windows -BC:/Users/disna/OneDrive/Desktop/batik_scanner/batik_scanner_app/build/windows/x64 --check-stamp-file C:/Users/disna/OneDrive/Desktop/batik_scanner/batik_scanner_app/build/windows/x64/flutter/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

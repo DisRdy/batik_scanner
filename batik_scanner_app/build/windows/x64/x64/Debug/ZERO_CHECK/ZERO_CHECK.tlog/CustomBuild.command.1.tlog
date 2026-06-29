@@ -1,0 +1,10 @@
+^C:\USERS\DISNA\ONEDRIVE\DESKTOP\BATIK_SCANNER\BATIK_SCANNER_APP\BUILD\WINDOWS\X64\CMAKEFILES\4FC88BD135816FB8FDA7923424CB7922\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SC:/Users/disna/OneDrive/Desktop/batik_scanner/batik_scanner_app/windows -BC:/Users/disna/OneDrive/Desktop/batik_scanner/batik_scanner_app/build/windows/x64 --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/disna/OneDrive/Desktop/batik_scanner/batik_scanner_app/build/windows/x64/batik_scanner_app.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
